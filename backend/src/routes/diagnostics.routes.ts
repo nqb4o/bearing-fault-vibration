@@ -33,7 +33,11 @@ router.post('/predict', authenticateToken, upload.single('file'), async (req: Re
     } catch (error: any) {
         // Cleanup temp file on error too
         if (file) fs.unlinkSync(file.path);
-        res.status(500).json({ error: "Inference failed", details: error.message });
+
+        const status = error.response?.status || 500;
+        const message = error.response?.data?.detail || error.response?.data?.error || "Inference failed";
+
+        res.status(status).json({ error: message, details: error.message });
     }
 });
 

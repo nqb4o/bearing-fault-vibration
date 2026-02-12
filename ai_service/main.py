@@ -167,6 +167,8 @@ async def predict_fault(file: UploadFile = File(...)):
         result = engine.predict(signal)
         return result
 
+    except HTTPException as e:
+        raise e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -37,6 +37,7 @@ export default function TrainingPage() {
 
             if (response.ok) {
                 const data = await response.json();
+                console.log('Fetched training history:', data);
                 if (data.history) {
                     // Convert history format {acc: [], loss: []} to logs format [{epoch: 1, acc: ...}]
                     const formattedLogs: any[] = [];
@@ -50,9 +51,16 @@ export default function TrainingPage() {
                             });
                             formattedLogs.push(entry);
                         }
+                        console.log('Formatted logs:', formattedLogs);
                         setLogs(formattedLogs);
                     }
+                } else {
+                    console.log('No history found in response');
                 }
+            } else {
+                console.error('Failed to fetch history, status:', response.status);
+                const errData = await response.json().catch(() => ({}));
+                console.error('Error details:', errData);
             }
         } catch (err) {
             console.error('Failed to fetch history:', err);

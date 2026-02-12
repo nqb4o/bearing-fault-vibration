@@ -233,7 +233,12 @@ class AIEngine:
             )
 
         history = await loop.run_in_executor(None, run_fit)
-        self.history = history.history
+        
+        # Save history to instance variable
+        clean_history = {}
+        for k, v in history.history.items():
+            clean_history[k] = [float(x) for x in v]
+        self.history = clean_history
 
         self.save_resources()
         
@@ -242,9 +247,9 @@ class AIEngine:
         
         return {
             "status": "Training Complete", 
-            "test_acc": test_acc,
-            "feature_model_acc": feat_acc,
-            "history": history.history
+            "test_acc": float(test_acc),
+            "feature_model_acc": float(feat_acc),
+            "history": clean_history
         }
 
     def predict(self, signal_values):
