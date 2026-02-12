@@ -1,0 +1,10 @@
+streamlit
+kagglehub
+numpy
+pandas
+tensorflow
+shap
+scikit-learn
+matplotlib
+plotly
+tensorflow

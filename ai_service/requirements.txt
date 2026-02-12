@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+numpy
+pandas
+tensorflow
+scikit-learn
+plotly
+scipy
+seaborn
+shap
+kagglehub
+python-multipart
+joblib
+websockets

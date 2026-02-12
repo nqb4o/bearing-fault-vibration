@@ -1,0 +1,5 @@
+{
+  "name": "BearingGuard Pro",
+  "description": "Production-grade bearing vibration diagnostics dashboard using AI and SHAP values.",
+  "requestFramePermissions": []
+}
