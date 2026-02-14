@@ -13,6 +13,7 @@ import kagglehub
 import asyncio
 from .config import WINDOW_SIZE, STRIDE, TEST_SIZE, RANDOM_SEED, MODEL_PATH, SCALER_PATH, SHAP_BACKGROUND_PATH, FEATURE_MODEL_PATH, HISTORY_PATH
 from .features import extract_features_batch, FEATURE_NAMES, FEATURE_CATEGORIES
+from ydata_profiling import ProfileReport
 
 # Global State (Simulating in-memory persistence for now, but backed by files)
 class AIEngine:
@@ -25,6 +26,7 @@ class AIEngine:
         self.background_data = None
         self.feature_model = None
         self.history = None
+        self.current_model_path = None
         self.load_resources()
 
     def load_resources(self):
@@ -80,6 +82,161 @@ class AIEngine:
         if self.history is not None:
              joblib.dump(self.history, HISTORY_PATH)
 
+    async def validate_and_profile(self, dataset_path):
+        """
+        Validates the dataset schema and generates a ydata-profiling report.
+        Handles both single CSV files and directories (recurisvely searching for labeled data).
+        Returns: { "valid": bool, "checks": list, "report_path": str }
+        """
+        checks = []
+        is_valid = True
+        df_for_profile = None
+
+        if os.path.isdir(dataset_path):
+            # 1. Directory Structure Analysis
+            csv_files = []
+            class_counts = {"normal": 0, "inner": 0, "outer": 0}
+            
+            for root, dirs, files in os.walk(dataset_path):
+                for file in files:
+                    if file.endswith(".csv"):
+                        path = os.path.join(root, file)
+                        csv_files.append(path)
+                        
+                        # Check labels based on directory structure (Standard: Normal, Inner Race Fault, Outer Race Fault)
+                        # We check if the path contains these specific folder names
+                        path_parts = os.path.normpath(path).split(os.sep)
+                        lower_parts = [p.lower() for p in path_parts]
+                        
+                        if "normal" in lower_parts:
+                            class_counts["normal"] += 1
+                        elif any(x in lower_parts for x in ["inner race fault", "inner"]):
+                            class_counts["inner"] += 1
+                        elif any(x in lower_parts for x in ["outer race fault", "outer"]):
+                            class_counts["outer"] += 1
+            
+            total_files = len(csv_files)
+            if total_files == 0:
+                 checks.append({"name": "File Discovery", "status": "Fail", "detail": "No CSV files found in directory."})
+                 is_valid = False
+            else:
+                 checks.append({"name": "File Discovery", "status": "Pass", "detail": f"Found {total_files} CSV files."})
+                 
+            # Check Class Balance
+            missing = [k for k, v in class_counts.items() if v == 0]
+            if missing:
+                checks.append({"name": "Class Distribution", "status": "Warning", "detail": f"Missing classes: {', '.join(missing)}. Training requires Normal, Inner, and Outer fault data."})
+            else:
+                checks.append({"name": "Class Distribution", "status": "Pass", "detail": f"Found all classes. (N: {class_counts['normal']}, I: {class_counts['inner']}, O: {class_counts['outer']})"})
+
+            # Create sample for profiling (1 file from each available class, max 3 files)
+            sample_paths = []
+            for key in class_counts:
+                if class_counts[key] > 0:
+                    # Find first file of this class
+                    for f in csv_files:
+                        if key in (f + os.path.dirname(f)).lower():
+                            sample_paths.append(f)
+                            break
+            
+            # If no classes found, just take first 3 files
+            if not sample_paths and csv_files:
+                sample_paths = csv_files[:3]
+                
+            if sample_paths:
+                try:
+                    dfs = [pd.read_csv(p) for p in sample_paths]
+                    df_for_profile = pd.concat(dfs, ignore_index=True)
+                    checks.append({"name": "Data Sampling", "status": "Pass", "detail": f"Created profile using sample of {len(sample_paths)} files."})
+                except Exception as e:
+                    checks.append({"name": "Data Reading", "status": "Fail", "detail": f"Failed to read sample files: {str(e)}"})
+                    is_valid = False
+
+        else:
+            # Single File Mode
+            if not os.path.exists(dataset_path):
+                 checks.append({"name": "File Check", "status": "Fail", "detail": "File not found."})
+                 return {"valid": False, "checks": checks, "report_path": None}
+            
+            try:
+                df_for_profile = pd.read_csv(dataset_path)
+                checks.append({"name": "File Access", "status": "Pass", "detail": "Successfully read CSV file."})
+            except Exception as e:
+                checks.append({"name": "File Access", "status": "Fail", "detail": f"Corrupt or invalid CSV: {str(e)}"})
+                is_valid = False
+
+
+        # 2. Schema Validation (on the loaded dataframe)
+        if df_for_profile is not None and is_valid:
+            # Column Check
+            numeric_cols = df_for_profile.select_dtypes(include=[np.number]).columns.tolist()
+            if len(numeric_cols) > 0:
+                checks.append({"name": "Column Schema", "status": "Pass", "detail": f"Found {len(numeric_cols)} numeric columns."})
+            else:
+                checks.append({"name": "Column Schema", "status": "Fail", "detail": "No numeric columns found."})
+                is_valid = False
+
+            # Missing Values
+            if df_for_profile.isnull().values.any():
+                missing_count = df_for_profile.isnull().sum().sum()
+                checks.append({"name": "Data Integrity", "status": "Warning", "detail": f"Found {missing_count} missing values in sample."})
+            else:
+                checks.append({"name": "Data Integrity", "status": "Pass", "detail": "No missing values in sample."})
+
+            # Data Length (Check combined length)
+            if len(df_for_profile) < 1024:
+                 checks.append({"name": "Sample Size", "status": "Fail", "detail": f"Total sample size {len(df_for_profile)} is too small. Need > 1024."})
+                 is_valid = False
+            else:
+                 checks.append({"name": "Sample Size", "status": "Pass", "detail": f"Sample size {len(df_for_profile)} OK."})
+
+            # Generate Report
+            try:
+                report_dir = os.path.join(os.getcwd(), "reports")
+                os.makedirs(report_dir, exist_ok=True)
+                report_filename = f"profile_{os.path.basename(dataset_path).replace('.csv', '').replace(' ', '_')}.html"
+                report_path = os.path.join(report_dir, report_filename)
+                
+                profile = ProfileReport(df_for_profile, title=f"Dataset Profile: {os.path.basename(dataset_path)}", minimal=True)
+                await asyncio.to_thread(profile.to_file, report_path)
+                
+                return {
+                    "valid": is_valid,
+                    "checks": checks,
+                    "report_path": f"/reports/{report_filename}"
+                }
+            except Exception as e:
+                checks.append({"name": "Profiling", "status": "Fail", "detail": f"Report generation failed: {str(e)}"})
+                return {"valid": is_valid, "checks": checks, "report_path": None}
+        
+        return {
+            "valid": is_valid,
+            "checks": checks,
+            "report_path": None
+        }
+
+    def load_model_dynamic(self, model_path_prefix):
+        """Loads a specific model version (CNN + Scaler + Features)."""
+        try:
+            model_path = f"{model_path_prefix}.h5"
+            scaler_path = f"{model_path_prefix}_scaler.joblib"
+            feature_model_path = f"{model_path_prefix}_features.joblib"
+            
+            if os.path.exists(model_path):
+                self.model = tf.keras.models.load_model(model_path)
+            
+            if os.path.exists(scaler_path):
+                self.scaler = joblib.load(scaler_path)
+                
+            if os.path.exists(feature_model_path):
+                self.feature_model = joblib.load(feature_model_path)
+            
+            self.current_model_path = model_path_prefix
+            return True
+        except Exception as e:
+            print(f"Failed to load dynamic model: {e}")
+            return False
+
     def download_dataset(self):
         """Downloads dataset from Kaggle."""
         return kagglehub.dataset_download("sumairaziz/subf-v1-0-dataset-bearing-fault-vibration-data")
@@ -87,21 +244,50 @@ class AIEngine:
     def load_and_label_data(self, data_dir):
         filepaths = []
         labels = []
-        for root, dirs, files in os.walk(data_dir):
+
+        if os.path.isfile(data_dir):
+            # Single file case
+            files = [os.path.basename(data_dir)]
+            root = os.path.dirname(data_dir)
+            iteration = [(root, [], files)]
+        else:
+            # Directory case
+            iteration = os.walk(data_dir)
+
+        for root, dirs, files in iteration:
             for file in files:
                 if file.endswith(".csv"):
                     full_path = os.path.join(root, file)
-                    lower_name = (file + root).lower()
-                    if "normal" in lower_name:
+                    
+                    # Standardized Labeling Logic
+                    # Check path components for exact folder matches first, then fall back to loose matching if needed
+                    path_parts = os.path.normpath(full_path).split(os.sep)
+                    lower_parts = [p.lower() for p in path_parts]
+                    
+                    label = None
+                    if "normal" in lower_parts:
                         label = 0
-                    elif "inner" in lower_name:
+                    elif any(x in lower_parts for x in ["inner race fault", "inner"]):
                         label = 1
-                    elif "outer" in lower_name:
+                    elif any(x in lower_parts for x in ["outer race fault", "outer"]):
                         label = 2
+                    
+                    if label is None:
+                        # Fallback: check filename if folder structure isn't perfect
+                        lower_name = file.lower()
+                        if "normal" in lower_name:
+                            label = 0
+                        elif "inner" in lower_name:
+                            label = 1
+                        elif "outer" in lower_name:
+                            label = 2
+                    
+                    if label is not None:
+                        filepaths.append(full_path)
+                        labels.append(label)
                     else:
+                        # print(f"Skipping unlabeled file: {file} (Path: {full_path})")
                         continue
-                    filepaths.append(full_path)
-                    labels.append(label)
         return filepaths, labels
 
     def create_sliding_windows(self, signal, window_size, stride):
@@ -114,13 +300,37 @@ class AIEngine:
         strides = (signal.strides[0] * stride, signal.strides[0])
         return np.lib.stride_tricks.as_strided(signal, shape=shp, strides=strides)
 
-    async def train_model(self, epochs=10, batch_size=32, progress_callback=None):
+    async def train_model(self, epochs=10, batch_size=32, progress_callback=None, dataset_path=None, model_name="default"):
         """
         Full training pipeline: Download -> Process -> Train CNN + Feature Model -> Save.
         """
         print("Starting training pipeline...")
-        # Download and Data Prep (can stay sync or be moved to thread if heavy)
-        data_path = self.download_dataset()
+        
+        if dataset_path:
+            # If single file provided (for simplicity in this prototype), we might need logic to split or use it.
+            # However, existing logic expects a directory with specific naming (inner, outer, normal).
+            # If dataset_path is a CSV, we might need to assume it's a merged dataset with labels or just one file.
+            # FOR NOW: If dataset_path is a file, we assume it's a CSV with a 'label' column? 
+            # OR we assume dataset_path is a DIRECTORY uploaded by admin.
+            # Let's assume dataset_path is a single CSV for simplicity of the upload tool, 
+            # but for real training we need labeled data. 
+            # Let's assume the upload was a ZIP extracted or a single CSV with 'label' column.
+            
+            if os.path.isfile(dataset_path):
+                 # Handle single CSV training (Experimental)
+                 print(f"Training on single file: {dataset_path}")
+                 df = pd.read_csv(dataset_path)
+                 # Expect 'signal' and 'label' columns, or logic to infer.
+                 # This is a placeholder for custom dataset logic.
+                 # Fallback to download if simple validation.
+                 data_path = dataset_path
+            else:
+                 data_path = dataset_path # It is a directory
+
+        else:
+            # Download and Data Prep (can stay sync or be moved to thread if heavy)
+            data_path = self.download_dataset()
+            
         filepaths, labels = self.load_and_label_data(data_path)
 
         all_X = []
@@ -170,7 +380,12 @@ class AIEngine:
         )
         
         # Select background data for SHAP (subset of training data)
-        self.background_data = X_train[np.random.choice(X_train.shape[0], 50, replace=False)]
+        # Ensure we don't sample more than available
+        n_background = min(50, X_train.shape[0])
+        if n_background > 0:
+            self.background_data = X_train[np.random.choice(X_train.shape[0], n_background, replace=False)]
+        else:
+             self.background_data = X_train # Should not happen given check above but safe fallback
 
         # ───────────────────────────────────────────────────────────────────
         # Train Secondary Feature-Based Model for SHAP Explainability
@@ -240,6 +455,22 @@ class AIEngine:
             clean_history[k] = [float(x) for x in v]
         self.history = clean_history
 
+        # Save to custom path if model_name provided
+        base_path = os.path.join(os.path.dirname(MODEL_PATH), model_name)
+        
+        # Create dir if needed
+        os.makedirs(os.path.dirname(base_path), exist_ok=True)
+
+        self.model.save(f"{base_path}.h5")
+        joblib.dump(self.scaler, f"{base_path}_scaler.joblib")
+        if self.background_data is not None:
+             joblib.dump(self.background_data, f"{base_path}_shap.joblib")
+        if self.feature_model is not None:
+            joblib.dump(self.feature_model, f"{base_path}_features.joblib")
+        if self.history is not None:
+             joblib.dump(self.history, f"{base_path}_history.joblib")
+        
+        # Also update default for immediate use
         self.save_resources()
         
         # Evaluate in thread or sync (fast enough)
@@ -249,7 +480,8 @@ class AIEngine:
             "status": "Training Complete", 
             "test_acc": float(test_acc),
             "feature_model_acc": float(feat_acc),
-            "history": clean_history
+            "history": clean_history,
+            "model_path": base_path
         }
 
     def predict(self, signal_values):

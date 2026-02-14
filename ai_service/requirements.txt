@@ -12,3 +12,6 @@ kagglehub
 python-multipart
 joblib
 websockets
+ydata-profiling
+setuptools
+aiofiles

@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import diagnosticsRoutes from './routes/diagnostics.routes';
+import datasetRoutes from './routes/dataset.routes';
+import modelRoutes from './routes/model.routes';
 
 dotenv.config();
 
@@ -17,6 +19,8 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/diagnostics', diagnosticsRoutes);
+app.use('/api/admin/datasets', datasetRoutes);
+app.use('/api/models', modelRoutes);
 
 app.get('/', (req: Request, res: Response) => {
     res.send('Bearing Fault Diagnostic Backend Running');

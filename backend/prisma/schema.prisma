@@ -26,3 +26,26 @@ model DiagnosticHistory {
   confidence Float
   timestamp DateTime @default(now())
 }
+
+model Dataset {
+  id        Int      @id @default(autoincrement())
+  name      String
+  path      String
+  uploadedAt DateTime @default(now())
+  size      Int      // in bytes
+  rowCount  Int
+  columns   String   // JSON string of column names
+  status    String   // "uploaded", "processing", "ready", "error"
+  models    TrainedModel[]
+}
+
+model TrainedModel {
+  id        Int      @id @default(autoincrement())
+  name      String
+  version   String
+  path      String
+  accuracy  Float
+  createdAt DateTime @default(now())
+  datasetId Int?
+  dataset   Dataset? @relation(fields: [datasetId], references: [id])
+}

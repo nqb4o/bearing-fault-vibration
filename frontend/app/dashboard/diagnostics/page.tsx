@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
-import { AlertCircle, CheckCircle, SmartphoneNfc, Brain } from 'lucide-react';
+import { AlertCircle, CheckCircle, SmartphoneNfc, Brain, Code, X, Copy, Check } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
 interface ShapExplanation {
@@ -32,10 +32,54 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function DiagnosticsPage() {
     const [file, setFile] = useState<File | null>(null);
+    const [models, setModels] = useState<any[]>([]);
+    const [selectedModel, setSelectedModel] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState<DiagnosisResult | null>(null);
     const [error, setError] = useState('');
     const router = useRouter();
+
+    const [showApiModal, setShowApiModal] = useState(false);
+    const [snippet, setSnippet] = useState<{ python: string, curl: string } | null>(null);
+    const [copied, setCopied] = useState('');
+
+    useEffect(() => {
+        if (showApiModal && selectedModel) {
+            fetchSnippet(selectedModel);
+        }
+    }, [showApiModal, selectedModel]);
+
+    const fetchSnippet = async (id: string) => {
+        try {
+            const { data } = await api.get(`/models/${id}/snippet`);
+            setSnippet(data);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const copyToClipboard = (text: string, type: string) => {
+        navigator.clipboard.writeText(text);
+        setCopied(type);
+        setTimeout(() => setCopied(''), 2000);
+    };
+
+    useEffect(() => {
+        fetchModels();
+    }, []);
+
+    const fetchModels = async () => {
+        try {
+            const { data } = await api.get('/models');
+            setModels(data);
+            if (data.length > 0) {
+                // Determine best default? For now, just pick the latest or none
+                setSelectedModel(data[0].id.toString());
+            }
+        } catch (err) {
+            console.error("Failed to fetch models", err);
+        }
+    };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -52,6 +96,9 @@ export default function DiagnosticsPage() {
 
         const formData = new FormData();
         formData.append('file', file);
+        if (selectedModel) {
+            formData.append('modelId', selectedModel);
+        }
 
         try {
             const { data } = await api.post('/diagnostics/predict', formData, {
@@ -113,27 +160,55 @@ export default function DiagnosticsPage() {
             {/* Upload Unit */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <h2 className="text-lg font-semibold mb-4">New Analysis</h2>
-                <div className="flex items-center gap-4">
-                    <div className="flex-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Select Model</label>
+                        <select
+                            value={selectedModel}
+                            onChange={(e) => setSelectedModel(e.target.value)}
+                            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+                        >
+                            <option value="">-- Default Model --</option>
+                            {models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                    {m.name} (v{m.version}) - {(m.accuracy * 100).toFixed(1)}% Acc
+                                </option>
+                            ))}
+                        </select>
+                        {selectedModel && (
+                            <button
+                                onClick={() => setShowApiModal(true)}
+                                className="text-xs text-indigo-600 font-medium mt-1 hover:underline flex items-center gap-1"
+                            >
+                                <Code size={12} />
+                                Get API Code for this model
+                            </button>
+                        )}
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Upload Sensor Data</label>
                         <input
                             type="file"
                             accept=".csv"
                             onChange={handleFileChange}
                             className="block w-full text-sm text-gray-500
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-full file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-blue-50 file:text-blue-700
-                      hover:file:bg-blue-100 placeholder-gray-400
-                    "
+                                file:mr-4 file:py-2 file:px-4
+                                file:rounded-full file:border-0
+                                file:text-sm file:font-semibold
+                                file:bg-blue-50 file:text-blue-700
+                                hover:file:bg-blue-100 placeholder-gray-400"
                         />
                     </div>
+                </div>
+
+                <div className="flex justify-end">
                     <button
                         onClick={handleUpload}
                         disabled={!file || loading}
                         className={`flex items-center gap-2 px-6 py-2 rounded-full font-semibold text-white transition
-                    ${!file || loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}
-                `}
+                            ${!file || loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}
+                        `}
                     >
                         {loading ? 'Processing...' : 'Run Diagnostics'}
                         {!loading && <SmartphoneNfc size={18} />}

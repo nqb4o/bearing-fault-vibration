@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { LayoutDashboard, Activity, Database, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Activity, Database, LogOut, Menu, X, Box } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -27,8 +27,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
 
     const menuItems = [
-        { name: 'Field Diagnostics', href: '/dashboard/diagnostics', icon: Activity, roles: ['USER', 'ADMIN'] },
         { name: 'Data & Training', href: '/dashboard/training', icon: Database, roles: ['ADMIN'] },
+        { name: 'Model Marketplace', href: '/dashboard/models', icon: Box, roles: ['USER', 'ADMIN'] },
+        { name: 'Field Diagnostics', href: '/dashboard/diagnostics', icon: Activity, roles: ['USER', 'ADMIN'] }
     ];
 
     if (!role) return null; // or loading spinner
@@ -53,8 +54,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 key={item.name}
                                 href={item.href}
                                 className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${pathname === item.href
-                                        ? 'bg-blue-50 text-blue-600 font-medium'
-                                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                                    ? 'bg-blue-50 text-blue-600 font-medium'
+                                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                                     }`}
                             >
                                 <item.icon size={20} />
