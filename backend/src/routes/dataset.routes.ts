@@ -51,26 +51,61 @@ router.get('/', authenticateToken, requireAdmin, async (req: Request, res: Respo
     }
 });
 
-// POST /api/admin/datasets/upload - Upload new dataset
-router.post('/upload', authenticateToken, requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
+// POST /api/admin/datasets/upload - Upload new dataset (Multiple files support)
+router.post('/upload', authenticateToken, requireAdmin, upload.array('files'), async (req: Request, res: Response) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No file uploaded" });
+        if (!req.files || (req.files as Express.Multer.File[]).length === 0) {
+            return res.status(400).json({ error: "No files uploaded" });
         }
 
-        // Basic CSV analysis (read first line for columns)
-        const filePath = req.file.path;
-        const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const lines = fileContent.split('\n');
-        const rowCount = lines.length - 1; // Approximate
-        const columns = lines[0].split(',').map(c => c.trim());
+        const files = req.files as Express.Multer.File[];
+
+        // Create a specific folder for this dataset upload to keep things organized
+        // Use the timestamp-random suffix from the first file's generation or a new one
+        const datasetId = Date.now() + '-' + Math.round(Math.random() * 1E5);
+        const datasetPath = path.join(uploadDir, datasetId);
+
+        if (!fs.existsSync(datasetPath)) {
+            fs.mkdirSync(datasetPath, { recursive: true });
+        }
+
+        // Move files to this new folder
+        let totalSize = 0;
+        let rowCount = 0;
+        let columns: string[] = [];
+        let totalFiles = 0;
+
+        for (const file of files) {
+            const oldPath = file.path;
+            const newPath = path.join(datasetPath, file.originalname);
+            fs.renameSync(oldPath, newPath);
+            totalSize += file.size;
+            totalFiles++;
+
+            // Analyze the first file found to get columns
+            if (columns.length === 0) {
+                try {
+                    const content = fs.readFileSync(newPath, 'utf-8');
+                    const lines = content.split('\n');
+                    if (lines.length > 0) {
+                        columns = lines[0].split(',').map(c => c.trim());
+                        // Simple row count estimation from one file is not accurate for multi-file
+                        // We will just store 0 or update later via profiling
+                        rowCount = lines.length - 1;
+                    }
+                } catch (e) { }
+            }
+        }
+
+        // Use the name from the request or the folder ID
+        const name = req.body.name || `Dataset ${datasetId}`;
 
         const dataset = await prisma.dataset.create({
             data: {
-                name: req.body.name || req.file.originalname,
-                path: filePath,
-                size: req.file.size,
-                rowCount: Math.max(0, rowCount),
+                name: name,
+                path: datasetPath, // Point to the DIRECTORY, not a file
+                size: totalSize,
+                rowCount: rowCount, // This is just an estimate from one file, real count comes later
                 columns: JSON.stringify(columns),
                 status: 'uploaded'
             }
@@ -79,6 +114,7 @@ router.post('/upload', authenticateToken, requireAdmin, upload.single('file'), a
         res.json(dataset);
 
     } catch (error: any) {
+        // Cleanup on error (optional but good practice)
         res.status(500).json({ error: "Failed to upload dataset", details: error.message });
     }
 });
@@ -143,10 +179,13 @@ router.post('/:id/validate', authenticateToken, requireAdmin, async (req: Reques
             // Update with results (assuming response contains report path or success status)
             await prisma.dataset.update({
                 where: { id },
-                data: { status: 'ready' }
+                data: {
+                    status: 'ready',
+                    validationResult: response.data // Save the full AI response (valid, checks, report_path)
+                }
             });
 
-            res.json({ message: "Validation started", ai_response: response.data });
+            res.json({ message: "Validation completed", ai_response: response.data });
 
         } catch (aiError: any) {
             await prisma.dataset.update({

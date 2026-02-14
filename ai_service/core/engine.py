@@ -93,7 +93,7 @@ class AIEngine:
         df_for_profile = None
 
         if os.path.isdir(dataset_path):
-            # 1. Directory Structure Analysis
+            # 1. Directory Structure & File Discovery
             csv_files = []
             class_counts = {"normal": 0, "inner": 0, "outer": 0}
             
@@ -103,16 +103,19 @@ class AIEngine:
                         path = os.path.join(root, file)
                         csv_files.append(path)
                         
-                        # Check labels based on directory structure (Standard: Normal, Inner Race Fault, Outer Race Fault)
-                        # We check if the path contains these specific folder names
+                        # Label Detection Logic
+                        # Strategy 1: Folder Name (Kaggle Structure)
                         path_parts = os.path.normpath(path).split(os.sep)
                         lower_parts = [p.lower() for p in path_parts]
                         
-                        if "normal" in lower_parts:
+                        # Strategy 2: Filename (Upload Structure: XYZ_IR, XYZ_OR, XYZ_N)
+                        lower_name = file.lower()
+
+                        if "normal" in lower_parts or "_n" in lower_name or "normal" in lower_name:
                             class_counts["normal"] += 1
-                        elif any(x in lower_parts for x in ["inner race fault", "inner"]):
+                        elif any(x in lower_parts for x in ["inner race fault", "inner"]) or "_ir" in lower_name:
                             class_counts["inner"] += 1
-                        elif any(x in lower_parts for x in ["outer race fault", "outer"]):
+                        elif any(x in lower_parts for x in ["outer race fault", "outer"]) or "_or" in lower_name:
                             class_counts["outer"] += 1
             
             total_files = len(csv_files)
@@ -123,37 +126,80 @@ class AIEngine:
                  checks.append({"name": "File Discovery", "status": "Pass", "detail": f"Found {total_files} CSV files."})
                  
             # Check Class Balance
-            missing = [k for k, v in class_counts.items() if v == 0]
-            if missing:
-                checks.append({"name": "Class Distribution", "status": "Warning", "detail": f"Missing classes: {', '.join(missing)}. Training requires Normal, Inner, and Outer fault data."})
-            else:
-                checks.append({"name": "Class Distribution", "status": "Pass", "detail": f"Found all classes. (N: {class_counts['normal']}, I: {class_counts['inner']}, O: {class_counts['outer']})"})
+            missing = []
+            if class_counts["normal"] == 0: missing.append("Normal")
+            if class_counts["inner"] == 0: missing.append("Inner Race Fault")
+            if class_counts["outer"] == 0: missing.append("Outer Race Fault")
 
-            # Create sample for profiling (1 file from each available class, max 3 files)
-            sample_paths = []
-            for key in class_counts:
-                if class_counts[key] > 0:
-                    # Find first file of this class
-                    for f in csv_files:
-                        if key in (f + os.path.dirname(f)).lower():
-                            sample_paths.append(f)
-                            break
-            
-            # If no classes found, just take first 3 files
-            if not sample_paths and csv_files:
-                sample_paths = csv_files[:3]
+            if missing:
+                checks.append({
+                    "name": "Class Distribution", 
+                    "status": "Warning", 
+                    "detail": f"Missing classes: {', '.join(missing)}. Ensure folders are named 'Normal', 'Inner Race Fault', 'Outer Race Fault' OR filenames contain '_N', '_IR', '_OR'."
+                })
+            else:
+                checks.append({
+                    "name": "Class Distribution", 
+                    "status": "Pass", 
+                    "detail": f"Found all classes. (N: {class_counts['normal']}, I: {class_counts['inner']}, O: {class_counts['outer']})"
+                })
+
+            # SMART SAMPLING for Profiling
+            # Instead of first 3 files, take a balanced sample of up to 1000 rows TOTAL from across the classes
+            try:
+                samples = []
+                samples_per_class = 5 # Take 5 files from each class
                 
-            if sample_paths:
-                try:
-                    dfs = [pd.read_csv(p) for p in sample_paths]
-                    df_for_profile = pd.concat(dfs, ignore_index=True)
-                    checks.append({"name": "Data Sampling", "status": "Pass", "detail": f"Created profile using sample of {len(sample_paths)} files."})
-                except Exception as e:
-                    checks.append({"name": "Data Reading", "status": "Fail", "detail": f"Failed to read sample files: {str(e)}"})
+                # Helper to find files for a class
+                def get_files_for_class(cls_key):
+                    matches = []
+                    for f in csv_files:
+                        path_parts = os.path.normpath(f).split(os.sep)
+                        lower_parts = [p.lower() for p in path_parts]
+                        lower_name = os.path.basename(f).lower()
+                        
+                        if cls_key == "normal" and ("normal" in lower_parts or "_n" in lower_name or "normal" in lower_name):
+                             matches.append(f)
+                        elif cls_key == "inner" and (any(x in lower_parts for x in ["inner race fault", "inner"]) or "_ir" in lower_name):
+                             matches.append(f)
+                        elif cls_key == "outer" and (any(x in lower_parts for x in ["outer race fault", "outer"]) or "_or" in lower_name):
+                             matches.append(f)
+                    return matches
+
+                target_files = []
+                target_files.extend(get_files_for_class("normal")[:samples_per_class])
+                target_files.extend(get_files_for_class("inner")[:samples_per_class])
+                target_files.extend(get_files_for_class("outer")[:samples_per_class])
+                
+                # If nothing found specific, just take random 10
+                if not target_files:
+                    target_files = csv_files[:15]
+
+                for p in target_files:
+                    # Read only first 100 rows per file to save memory/time
+                    df_chunk = pd.read_csv(p, nrows=100) 
+                    # If this is 3-column data (Time, Acc1, Acc2) or similar
+                    # We might want to rename columns for consistency if they lack headers? 
+                    # Kaggle dataset often has NO header, just 3 cols.
+                    if df_chunk.shape[1] == 3 and not any(c.lower() in ['time', 'axial', 'radial', 'tangential'] for c in df_chunk.columns):
+                         # Assume 3-axis accelerometer data without headers
+                         df_chunk.columns = ['Sensor_1', 'Sensor_2', 'Sensor_3']
+                    
+                    samples.append(df_chunk)
+                
+                if samples:
+                    df_for_profile = pd.concat(samples, ignore_index=True)
+                    checks.append({"name": "Data Sampling", "status": "Pass", "detail": f"Created profile using {len(target_files)} representative files (sampled)."})
+                else:
+                    checks.append({"name": "Data Sampling", "status": "Fail", "detail": "Could not create data sample."})
                     is_valid = False
 
+            except Exception as e:
+                checks.append({"name": "Data Reading", "status": "Fail", "detail": f"Failed to read sample files: {str(e)}"})
+                is_valid = False
+
         else:
-            # Single File Mode
+            # Single File Mode - Legacy Support
             if not os.path.exists(dataset_path):
                  checks.append({"name": "File Check", "status": "Fail", "detail": "File not found."})
                  return {"valid": False, "checks": checks, "report_path": None}
@@ -183,10 +229,9 @@ class AIEngine:
             else:
                 checks.append({"name": "Data Integrity", "status": "Pass", "detail": "No missing values in sample."})
 
-            # Data Length (Check combined length)
-            if len(df_for_profile) < 1024:
-                 checks.append({"name": "Sample Size", "status": "Fail", "detail": f"Total sample size {len(df_for_profile)} is too small. Need > 1024."})
-                 is_valid = False
+            # Data Length (Check combined length of sample)
+            if len(df_for_profile) < 100:
+                 checks.append({"name": "Sample Size", "status": "Warning", "detail": f"Sample size {len(df_for_profile)} is small."})
             else:
                  checks.append({"name": "Sample Size", "status": "Pass", "detail": f"Sample size {len(df_for_profile)} OK."})
 
@@ -260,11 +305,17 @@ class AIEngine:
                     full_path = os.path.join(root, file)
                     
                     # Standardized Labeling Logic
-                    # Check path components for exact folder matches first, then fall back to loose matching if needed
                     path_parts = os.path.normpath(full_path).split(os.sep)
                     lower_parts = [p.lower() for p in path_parts]
+                    lower_name = file.lower()
                     
                     label = None
+                    
+                    # 0: Normal
+                    # 1: Inner Race
+                    # 2: Outer Race
+                    
+                    # Check Folder Names first (Kaggle Structure)
                     if "normal" in lower_parts:
                         label = 0
                     elif any(x in lower_parts for x in ["inner race fault", "inner"]):
@@ -272,16 +323,19 @@ class AIEngine:
                     elif any(x in lower_parts for x in ["outer race fault", "outer"]):
                         label = 2
                     
-                    if label is None:
-                        # Fallback: check filename if folder structure isn't perfect
-                        lower_name = file.lower()
-                        if "normal" in lower_name:
-                            label = 0
-                        elif "inner" in lower_name:
-                            label = 1
-                        elif "outer" in lower_name:
-                            label = 2
-                    
+                    # Fallback/Override: Check Filenames (Upload Structure)
+                    # This supports flat directory uploads with named files like XYZ_IR.csv
+                    if label is None or True: # Check filename always to catch Mixed cases? No, let's prioritize.
+                         # Actually, if we are in a flat dir, folder name might be 'uploads' or 'dataset_123' which is useless.
+                         # So if label is NOT found via specific folder names, check file.
+                         if label is None:
+                             if "_n" in lower_name or "normal" in lower_name:
+                                 label = 0
+                             elif "_ir" in lower_name or "inner" in lower_name:
+                                 label = 1
+                             elif "_or" in lower_name or "outer" in lower_name:
+                                 label = 2
+
                     if label is not None:
                         filepaths.append(full_path)
                         labels.append(label)

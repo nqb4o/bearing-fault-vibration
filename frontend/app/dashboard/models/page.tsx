@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Box, Code, Copy, Check } from 'lucide-react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+import api from '@/lib/api';
 
 export default function ModelsPage() {
     const [models, setModels] = useState<any[]>([]);
@@ -18,18 +17,8 @@ export default function ModelsPage() {
 
     const fetchModels = async () => {
         try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`${API_URL}/api/models`, { // Note: Server.ts mounted at /api/models, but route is /api/models? No, mounted at /api/models
-                // Wait, in server.ts: app.use('/api/models', modelRoutes);
-                // In modelRoutes: router.get('/', ...) -> /api/models/
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setModels(data);
-            }
+            const { data } = await api.get('/models');
+            setModels(data);
         } catch (err) {
             console.error('Failed to fetch models', err);
         } finally {
@@ -41,23 +30,37 @@ export default function ModelsPage() {
         setSelectedModel(id);
         // Fetch snippet
         try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`${API_URL}/api/models/${id}/snippet`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setSnippets(data);
-            }
+            const { data } = await api.get(`/models/${id}/snippet`);
+            setSnippets(data);
         } catch (err) {
             console.error(err);
         }
     };
 
-    const copyToClipboard = (text: string, type: string) => {
-        navigator.clipboard.writeText(text);
-        setCopied(type);
-        setTimeout(() => setCopied(''), 2000);
+    const copyToClipboard = async (text: string, type: string) => {
+        try {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                // Fallback for non-secure contexts or older browsers
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.position = "fixed";  // Avoid scrolling to bottom
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                } catch (err) {
+                    console.error('Fallback: Oops, unable to copy', err);
+                }
+                document.body.removeChild(textArea);
+            }
+            setCopied(type);
+            setTimeout(() => setCopied(''), 2000);
+        } catch (err) {
+            console.error('Failed to copy!', err);
+        }
     };
 
     return (

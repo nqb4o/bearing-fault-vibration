@@ -31,11 +31,12 @@ model Dataset {
   id        Int      @id @default(autoincrement())
   name      String
   path      String
-  uploadedAt DateTime @default(now())
-  size      Int      // in bytes
+  size      Int
   rowCount  Int
   columns   String   // JSON string of column names
-  status    String   // "uploaded", "processing", "ready", "error"
+  status    String   // uploaded, processing, ready, error
+  uploadedAt DateTime @default(now())
+  validationResult Json? // Store validation checks and report path
   models    TrainedModel[]
 }
 
