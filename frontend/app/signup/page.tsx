@@ -44,7 +44,7 @@ export default function SignupPage() {
                             <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
                             <input
                                 type="email"
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900"
                                 placeholder="user@example.com"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
@@ -59,7 +59,7 @@ export default function SignupPage() {
                             <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
                             <input
                                 type="password"
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900"
                                 placeholder="••••••••"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
@@ -75,7 +75,7 @@ export default function SignupPage() {
                             <select
                                 value={role}
                                 onChange={(e) => setRole(e.target.value)}
-                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition bg-white"
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition bg-white text-gray-900"
                             >
                                 <option value="USER">User (Field Tech)</option>
                                 <option value="ADMIN">Admin (Data Scientist)</option>
