@@ -187,7 +187,7 @@ bearing-fault-vibration/
 ### 1️⃣ Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/bearing-fault-vibration.git
+git clone https://github.com/nqb4o/bearing-fault-vibration.git
 cd bearing-fault-vibration
 ```
 
